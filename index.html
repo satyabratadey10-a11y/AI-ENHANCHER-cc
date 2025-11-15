@@ -1,0 +1,158 @@
+// Upload image to Vercel Blob
+async function uploadImageToBlob(file) {
+    try {
+        showAlert('info', 'Uploading to cloud storage...');
+        
+        const response = await fetch(`/api/upload?filename=${encodeURIComponent(file.name)}`, {
+            method: 'POST',
+            body: file,
+        });
+
+        const result = await response.json();
+        
+        if (result.success) {
+            showAlert('success', 'Image uploaded to cloud!');
+            return result.url;
+        } else {
+            throw new Error(result.error);
+        }
+    } catch (error) {
+        showAlert('error', 'Upload failed: ' + error.message);
+        return null;
+    }
+}
+
+// Save CC filter to cloud
+async function saveCustomCCToCloud() {
+    const ccValues = getCurrentCCValues();
+    const ccName = prompt('Enter a name for this CC preset:', 'My Custom CC');
+    
+    if (!ccName) return;
+
+    const ccData = {
+        name: ccName,
+        values: ccValues,
+        timestamp: new Date().toISOString()
+    };
+
+    try {
+        showAlert('info', 'Saving CC filter to cloud...');
+        
+        const response = await fetch('/api/upload-cc', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(ccData),
+        });
+
+        const result = await response.json();
+        
+        if (result.success) {
+            showAlert('success', `CC filter "${ccName}" saved to cloud!`);
+            
+            // Also download locally
+            const blob = new Blob([JSON.stringify(ccData, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = `${ccName.replace(/\s+/g, '_')}.cc`;
+            link.click();
+            URL.revokeObjectURL(url);
+            
+            // Refresh cloud CC list
+            await loadCloudCCFilters();
+        } else {
+            throw new Error(result.error);
+        }
+    } catch (error) {
+        showAlert('error', 'Failed to save CC: ' + error.message);
+    }
+}
+
+// Load CC filters from cloud
+async function loadCloudCCFilters() {
+    try {
+        const response = await fetch('/api/upload-cc');
+        const result = await response.json();
+        
+        if (result.success) {
+            loadedCCFiles = result.filters.map(f => ({
+                name: f.name,
+                data: f.values,
+                timestamp: new Date(f.uploadedAt).toLocaleString(),
+                cloudUrl: f.url
+            }));
+            
+            updateCCList();
+            
+            if (loadedCCFiles.length > 0) {
+                showAlert('success', `Loaded ${loadedCCFiles.length} CC filters from cloud`);
+            }
+        }
+    } catch (error) {
+        console.error('Failed to load cloud CC filters:', error);
+    }
+}
+
+// Save enhanced image to cloud
+async function saveEnhancedToCloud(imageDataUrl) {
+    try {
+        showAlert('info', 'Saving enhanced image to cloud...');
+        
+        const ccValues = getCurrentCCValues();
+        const metadata = {
+            quality: document.getElementById('qualitySelect').value,
+            model: document.getElementById('modelSelect').value,
+            ccFilter: currentCCFilter?.name || 'Custom',
+            ccValues: ccValues,
+        };
+
+        const response = await fetch('/api/save-enhanced', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                image: imageDataUrl,
+                metadata: metadata,
+            }),
+        });
+
+        const result = await response.json();
+        
+        if (result.success) {
+            showAlert('success', 'Enhanced image saved to cloud!');
+            return result.url;
+        } else {
+            throw new Error(result.error);
+        }
+    } catch (error) {
+        showAlert('error', 'Failed to save: ' + error.message);
+        return null;
+    }
+}
+
+// Update the existing saveCustomCC function
+function saveCustomCC() {
+    saveCustomCCToCloud();
+}
+
+// Load cloud CC filters on page load
+window.addEventListener('DOMContentLoaded', () => {
+    loadCloudCCFilters();
+});
+
+// Add cloud upload option to process button
+const originalProcessImage = processImage;
+processImage = async function() {
+    await originalProcessImage();
+    
+    // After processing, offer to save to cloud
+    if (enhancedPreview.src) {
+        const saveToCloud = confirm('Would you like to save the enhanced image to cloud storage?');
+        if (saveToCloud) {
+            await saveEnhancedToCloud(enhancedPreview.src);
+        }
+    }
+};
